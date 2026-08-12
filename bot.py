@@ -16,7 +16,7 @@ import google.generativeai as genai
 # ===================== الإعدادات =====================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = "gemini-1.5-pro-latest"  # ✅ النموذج الصحيح بعد التحديث
+MODEL_NAME = "gemini-1.5-pro-latest"  # ✅ واجهة v1 الجديدة
 
 MAX_HISTORY = 4
 
@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    print([m.name for m in genai.list_models()])  # ✅ اختبار النماذج المتاحة
+    print("✅ الاتصال بمفتاح Gemini تم بنجاح")
+    print([m.name for m in genai.list_models()])  # اختبار النماذج المتاحة
 
 user_histories = defaultdict(list)
 
@@ -66,13 +67,9 @@ def extract_code_blocks(text: str):
 async def ask_ai(user_id: int, user_message: str) -> str:
     history = user_histories[user_id]
     model = genai.GenerativeModel(MODEL_NAME, generation_config={"temperature": 0.4})
-    gemini_contents = []
-    for msg in history[-MAX_HISTORY:]:
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_contents.append({"role": role, "parts": [msg["content"]]})
-    gemini_contents.append({"role": "user", "parts": [user_message]})
+    chat = model.start_chat(history=[])
     try:
-        response = await model.generate_content_async(gemini_contents)
+        response = chat.send_message(user_message)
     except Exception as e:
         return f"⚠️ خطأ أثناء الاتصال بمحرك Gemini:\n{e}"
     reply = response.text or "⚠️ لم يصلني رد من الذكاء الاصطناعي."
