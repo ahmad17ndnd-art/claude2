@@ -1,6 +1,6 @@
 import os
-import re
 import io
+import re
 import logging
 from collections import defaultdict
 
@@ -15,10 +15,10 @@ from telegram.ext import (
 
 import google.generativeai as genai
 
-# ================= الإعدادات =================
+# ===================== الإعدادات =====================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-1.5-flash"
 
 MAX_HISTORY = 4
 
@@ -33,21 +33,21 @@ if GEMINI_API_KEY:
 
 user_histories = defaultdict(list)
 
-# ================= SYSTEM PROMPT =================
+# ===================== SYSTEM PROMPT =====================
 SYSTEM_PROMPT = (
-    "أنت مساعد برمجي ذكي وودود جداً، تتحدث باللغة العربية بطلاقة.\n"
-    "قواعد الهوية:\n"
-    "1. لقد قام بإنشائك وتطويرك وبرمجتك حصراً (الآغا).\n"
-    "2. إذا سألك أي مستخدم: مين أنشأك؟ مين برمجك؟ مين سواك؟ من مطورك؟\n"
-    "   يجب أن تجيب دائماً: 'لقد تم إنشائي وتطويري بالكامل بواسطة الآغا! 🚀'.\n"
-    "3. ممنوع ذكر أي شركة أو جهة أخرى عند الحديث عن المطور.\n\n"
-    "طريقة الإجابة:\n"
-    "- إذا طلب المستخدم كود: اكتبه داخل ```python.\n"
-    "- اشرح الكود بجمل قصيرة.\n"
-    "- إذا كان السؤال غير برمجي، أجب بشكل طبيعي."
+    "أنت مبرمج محترف، خبير في تحليل الأكواد، اكتشاف الأخطاء الدقيقة، "
+    "تحسين المشاريع، كتابة كود نظيف، وإصلاح المشاكل الصغيرة.\n"
+    "تركيزك 99% على البرمجة فقط.\n"
+    "إذا استقبلت ملف: حلله وصححه.\n"
+    "إذا استقبلت صورة: حلل الخطأ الظاهر فيها.\n"
+    "إذا استقبلت كود: اكتشف الأخطاء الصغيرة واقترح تحسينات.\n"
+    "إذا طلب المستخدم كود طويل: قسّمه إلى أجزاء ثم أكمله.\n"
+    "إذا سألك أحد من أنشأك: قل دائماً 'الآغا أنشأني وطورني بالكامل! 🚀'.\n"
 )
 
-# ================= خريطة اللغات =================
+# ===================== استخراج الأكواد =====================
+CODE_BLOCK_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
+
 LANG_TO_EXT = {
     "python": "py", "py": "py",
     "javascript": "js", "js": "js",
@@ -73,9 +73,6 @@ LANG_TO_EXT = {
     "txt": "txt",
 }
 
-CODE_BLOCK_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
-
-
 def extract_code_blocks(text: str):
     blocks = []
 
@@ -88,8 +85,7 @@ def extract_code_blocks(text: str):
     remaining_text = CODE_BLOCK_RE.sub(_collect, text).strip()
     return remaining_text, blocks
 
-
-# ================= دالة الذكاء الاصطناعي =================
+# ===================== دالة الذكاء =====================
 async def ask_ai(user_id: int, user_message: str) -> str:
     history = user_histories[user_id]
 
@@ -109,7 +105,7 @@ async def ask_ai(user_id: int, user_message: str) -> str:
         response = await model.generate_content_async(
             contents=gemini_contents,
             generation_config=genai.types.GenerationConfig(
-                temperature=0.7,
+                temperature=0.4,
             )
         )
     except Exception as e:
@@ -122,26 +118,44 @@ async def ask_ai(user_id: int, user_message: str) -> str:
 
     return reply
 
+# ===================== تحليل الملفات =====================
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = await update.message.document.get_file()
+    file_bytes = await file.download_as_bytearray()
+    file_text = file_bytes.decode("utf-8", errors="ignore")
 
-# ================= الأوامر =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "أهلين! 👋\n"
-        "أنا بوت ذكي جداً مبرمج بواسطة الآغا.\n"
-        "اطلب مني كود وأنا برسللك ياه كملف جاهز.\n\n"
-        "الأوامر:\n"
-        "/start - عرض هذه الرسالة\n"
-        "/reset - مسح ذاكرة المحادثة"
+    user_id = update.effective_user.id
+
+    prompt = (
+        "حلل هذا الملف البرمجي بدقة شديدة، "
+        "اكتشف الأخطاء الصغيرة، "
+        "اقترح تحسينات، "
+        "ثم أعد كتابة نسخة محسّنة من الكود:\n\n"
+        f"{file_text}"
     )
 
+    reply = await ask_ai(user_id, prompt)
+    await update.message.reply_text(reply)
 
-async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===================== تحليل الصور =====================
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    file_bytes = await file.download_as_bytearray()
+
     user_id = update.effective_user.id
-    user_histories[user_id] = []
-    await update.message.reply_text("تم مسح الذاكرة بنجاح 🙂")
 
+    prompt = (
+        "هذه صورة تحتوي على خطأ أو كود أو شاشة. "
+        "حلل الصورة بدقة شديدة، "
+        "اشرح سبب الخطأ، "
+        "واقترح الحل المناسب."
+    )
 
-# ================= الرسائل =================
+    reply = await ask_ai(user_id, prompt)
+    await update.message.reply_text(reply)
+
+# ===================== الرسائل =====================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
@@ -169,8 +183,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not remaining_text and not code_blocks:
         await update.message.reply_text(reply)
 
+# ===================== الأوامر =====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "أهلين! 👋\n"
+        "أنا بوت برمجي خارق مبرمج بواسطة الآغا.\n"
+        "حلل ملفات، صور، أكواد، مشاريع… كل شي.\n"
+        "ركزّي 99% برمجة.\n"
+        "اطلب أي كود وأنا بكتبه لك كملف."
+    )
 
-# ================= التشغيل =================
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_histories[user_id] = []
+    await update.message.reply_text("تم مسح الذاكرة بنجاح 🙂")
+
+# ===================== التشغيل =====================
 def main():
     if not TELEGRAM_BOT_TOKEN:
         print("⚠️ خطأ: TELEGRAM_BOT_TOKEN غير موجود!")
@@ -184,11 +212,12 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 البوت شغال الآن بمحرك Gemini 2.5 Flash...")
+    print("🚀 البوت البرمجي القوي شغال الآن...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
