@@ -1,6 +1,7 @@
 """
-بوت تلجرام ذكي - يجاوب على الأسئلة وبيرسل الأكواد كملفات
-يستخدم Groq API (مجاني) كمحرك ذكاء اصطناعي
+بوت تلجرام ذكي ومحدث - يجاوب على الأسئلة وبيرسل الأكواد كملفات
+تم التحديث: يعتمد بالكامل على البيئة الخارجية (Variables)
+المطور وصاحب البوت: المبرمج أحمد
 """
 
 import os
@@ -17,15 +18,16 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-from groq import Groq
+# استيراد مكتبة جوجل جينيريتيف إيه آي الرسمية
+import google.generativeai as genai
 
-# ============ الإعدادات ============
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "ضع_توكن_البوت_هون")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "ضع_مفتاح_Groq_هون")
-MODEL_NAME = "llama-3.3-70b-versatile"  # موديل مجاني وقوي عبر Groq
+# ============ الإعدادات (سحب البيانات تلقائياً من الـ Variables) ============
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+MODEL_NAME = "gemini-2.5-flash"  # النموذج السريع والذكي والمجاني تماماً
 
-# عدد الرسائل السابقة يلي بيحتفظ فيها البوت بذاكرة كل مستخدم
-MAX_HISTORY = 20
+# تم تقليص الذاكرة لضمان العمل لآلاف الأسئلة يومياً دون استهلاك العداد المجاني
+MAX_HISTORY = 4
 
 # ============ تجهيز اللوغ ============
 logging.basicConfig(
@@ -34,18 +36,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============ عميل Groq ============
-groq_client = Groq(api_key=GROQ_API_KEY)
+# ============ إعداد عميل Google Gemini ============
+# التحقق من وجود المفتاح قبل تشغيل العميل
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-# ذاكرة محادثة بسيطة لكل مستخدم (في الرام، بتنمسح لما يعيد تشغيل البوت)
+# الذاكرة البسيطة للمستخدمين (في الرام)
 user_histories = defaultdict(list)
 
+# بروتوكول النظام والتعليمات الصارمة لهوية البوت
 SYSTEM_PROMPT = (
-    "أنت مساعد برمجي ذكي وودود، بتحكي عربي وبتفهم إنجليزي كمان. "
-    "لما حدا يطلب منك كود، اكتبه كامل وواضح جوا code block مع تحديد اللغة "
-    "(مثلاً ```python أو ```javascript). "
-    "اشرح الكود بجمل قصيرة ومفيدة قبل أو بعد الكود. "
-    "إذا السؤال مش برمجي، جاوب بشكل طبيعي ومفيد."
+    "أنت مساعد برمجي ذكي وودود جداً، تتحدث باللغة العربية بطلاقة وتفهم الإنجليزية أيضاً. "
+    "قواعد صارمة ومقدسة لهويتك:\n"
+    "1. لقد قام بإنشائك وتطويرك وبرمجتك حصراً المبرمج المبدع (أحمد).\n"
+    "2. إذا سألك أي مستخدم 'مين أنشأك'، 'من مطورك'، 'من سواك'، 'من برمجك' أو أي سؤال عن أصلك، "
+    "يجب أن تجيب بفخر وثقة: 'لقد تم إنشائي وتطويري بالكامل بواسطة المبرمج المبدع أحمد! 🚀'.\n"
+    "3. لا تذكر أبداً شركة جوجل أو OpenAI أو أي جهة أخرى عند سؤالك عن المطور.\n\n"
+    "طريقة الإجابة البرمجية:\n"
+    "- عندما يطلب منك كود، اكتبه كاملاً وواضحاً داخل كتل برمجية (code block) مع تحديد اللغة (مثلاً ```python).\n"
+    "- اشرح الكود بجمل برمجية قصيرة ومفيدة قبل أو بعد الكود مباشرة.\n"
+    "- إذا كان السؤال غير برمجي، أجب بشكل طبيعي وذكي ومفيد."
 )
 
 # خريطة اللغة -> امتداد الملف
@@ -94,31 +104,49 @@ def extract_code_blocks(text: str):
 
 
 async def ask_ai(user_id: int, user_message: str) -> str:
-    """يرسل الرسالة إلى Groq ويرجع الرد"""
+    """يرسل الرسالة إلى Google Gemini ويرجع الرد"""
     history = user_histories[user_id]
-    history.append({"role": "user", "content": user_message})
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-MAX_HISTORY:]
-
-    response = groq_client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=messages,
-        temperature=0.7,
-        max_tokens=4000,
+    
+    # تهيئة نموذج الجيل الجديد من Gemini مع حقن التعليمات النظامية الاسمية
+    model = genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        system_instruction=SYSTEM_PROMPT
     )
-
-    reply = response.choices[0].message.content
+    
+    # تحويل محتوى الذاكرة المحلية إلى الصيغة البرمجية التي تقبلها مكتبة جوجل (user / model)
+    gemini_contents = []
+    # نأخذ آخر عدد محدد من الرسائل لضمان عدم تضخم الاستهلاك
+    for msg in history[-MAX_HISTORY:]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_contents.append({"role": role, "parts": [msg["content"]]})
+    
+    # إضافة الرسالة الجديدة الحالية للمستخدم
+    gemini_contents.append({"role": "user", "parts": [user_message]})
+    
+    # إرسال الطلب وإعداد معايير الاستجابة الحرارية
+    response = model.generate_content(
+        contents=gemini_contents,
+        generation_config=genai.types.GenerationConfig(
+            temperature=0.7,
+        )
+    )
+    
+    reply = response.text
+    
+    # حفظ المحادثة الحالية في ذاكرة البوت المحلية
+    history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": reply})
+    
     return reply
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "أهلين! 👋\n"
-        "أنا بوت ذكي بساعدك بالبرمجة وبجاوب على أي سؤال.\n"
+        "أنا بوت ذكي جداً مبرمج بواسطة أحمد، بساعدك بالبرمجة وبجاوب على أي سؤال.\n"
         "اطلب مني كود وأنا برسللك ياه كملف جاهز.\n\n"
         "الأوامر:\n"
-        "/start - عرض هاد الرسالة\n"
+        "/start - عرض هذه الرسالة\n"
         "/reset - مسح ذاكرة المحادثة والبدء من جديد"
     )
 
@@ -165,8 +193,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    if "ضع_" in TELEGRAM_BOT_TOKEN or "ضع_" in GROQ_API_KEY:
-        print("⚠️  لازم تحط توكن البوت ومفتاح Groq قبل ما تشغل البوت (شوف README.md)")
+    if not TELEGRAM_BOT_TOKEN:
+        print("⚠️ خطأ: متغير TELEGRAM_BOT_TOKEN غير موجود في إعدادات المنصة!")
+        return
+        
+    if not GEMINI_API_KEY:
+        print("⚠️ خطأ: متغير GEMINI_API_KEY غير موجود في إعدادات المنصة!")
         return
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -175,7 +207,7 @@ def main():
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 البوت شغال...")
+    print("🚀 البوت المطور شغال الآن بمحرك Google Gemini الآمن والمستقر...")
     app.run_polling()
 
 
